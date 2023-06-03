@@ -24,8 +24,6 @@ namespace ClassHub.Server.Controllers {
         const string blobStorageUri = "https://classhubfilestorage.blob.core.windows.net/";
         const string vaultStorageUri = "https://azureblobsecret.vault.azure.net/";
 
-        private readonly ILogger<AssignmentSubmitController> _logger;
-
         // 해당 과제의 제출 내역이 있는지 체크합니다. 
         [HttpGet("room_id/{room_id}/assignment_id/{assignment_id}/student_id/{student_id}")]
         public AssignmentSubmit GetAssignmentSubmit(int room_id, int assignment_id, int student_id) {
@@ -67,7 +65,6 @@ namespace ClassHub.Server.Controllers {
                     transaction.Commit();
                 } catch (Exception ex) {
                     transaction.Rollback();
-                    _logger.LogError($"msg :\n{ex.Message}");
                     return BadRequest();
                 }
             }

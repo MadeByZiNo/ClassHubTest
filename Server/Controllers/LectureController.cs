@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Npgsql;
 using Azure.Storage.Blobs.Models;
+using System.Transactions;
 
 namespace ClassHub.Server.Controllers {
     [Route("api/[controller]")]
@@ -123,80 +124,75 @@ namespace ClassHub.Server.Controllers {
         [HttpPost("{RoomId}/upload/{LectureId}")]
         public async Task<IActionResult> UploadLectureFiles(int RoomId, int LectureId, List<IFormFile> files) {
 
-
-         
-           
-
-
-            // blob 업로드하는 작업
-            var blobServiceClient = new BlobServiceClient(
+                // blob 업로드하는 작업
+                var blobServiceClient = new BlobServiceClient(
                 new Uri(blobStorageUri),
                 new DefaultAzureCredential()
             );
 
-            BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient("lecture");
-            using (var memoryStream = new MemoryStream()) {
-                await files[0].CopyToAsync(memoryStream);
-                memoryStream.Position = 0;
+                BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient("lecture");
+                using (var memoryStream = new MemoryStream()) {
+                    await files[0].CopyToAsync(memoryStream);
+                    memoryStream.Position = 0;
 
-                var blobClient = containerClient.GetBlobClient(files[0].FileName);
-                await Console.Out.WriteLineAsync($"Blob Name: {blobClient.Name}");
-                var response = await blobClient.UploadAsync(memoryStream, overwrite: true);
-                await Console.Out.WriteLineAsync(response.ToString());
-            }
+                    var blobClient = containerClient.GetBlobClient(files[0].FileName);
+                    await Console.Out.WriteLineAsync($"Blob Name: {blobClient.Name}");
+                    var response = await blobClient.UploadAsync(memoryStream, overwrite: true);
+                    await Console.Out.WriteLineAsync(response.ToString());
+                }
 
-            await Console.Out.WriteLineAsync("Blob Upload Success!");
+                await Console.Out.WriteLineAsync("Blob Upload Success!");
 
-          
-            // url를 구한다
 
-            var secretClient = new SecretClient(
-            vaultUri: new Uri(vaultStorageUri),
-            credential: new DefaultAzureCredential()
-            );
-            string secretName = "StorageAccountKey";
-            KeyVaultSecret secret = secretClient.GetSecret(secretName);
-            var storageAccountKey = secret.Value;
+                // url를 구한다
 
-            BlobClient blobClienturl = containerClient.GetBlobClient(files[0].FileName);
+                var secretClient = new SecretClient(
+                vaultUri: new Uri(vaultStorageUri),
+                credential: new DefaultAzureCredential()
+                );
+                string secretName = "StorageAccountKey";
+                KeyVaultSecret secret = secretClient.GetSecret(secretName);
+                var storageAccountKey = secret.Value;
 
-            // Blob에서 동영상 파일 읽어오기
-          
+                BlobClient blobClienturl = containerClient.GetBlobClient(files[0].FileName);
 
-            BlobSasBuilder sasBuilder = new BlobSasBuilder() {
-                BlobContainerName = containerClient.Name,
-                BlobName = blobClienturl.Name,
-                Resource = "b",
-                StartsOn = DateTime.UtcNow,
-                ExpiresOn = DateTime.UtcNow.AddMonths(3)
-            };
-            sasBuilder.SetPermissions(BlobSasPermissions.Read);
-            string sasToken = sasBuilder.ToSasQueryParameters(new StorageSharedKeyCredential(containerClient.AccountName, storageAccountKey)).ToString();
+                // Blob에서 동영상 파일 읽어오기
 
-            UriBuilder sasUri = new UriBuilder(blobClienturl.Uri) {
-                Query = sasToken
-            };
-            string downloadUrl = sasUri.ToString();
-            string encodedUrl = Uri.EscapeUriString(downloadUrl);
-            Console.WriteLine(downloadUrl);
-            Console.WriteLine(encodedUrl);
-            await Console.Out.WriteLineAsync("sasBuild and getTime Success!");
 
-            BlobDownloadInfo downloadInfo = await blobClienturl.DownloadAsync();
+                BlobSasBuilder sasBuilder = new BlobSasBuilder() {
+                    BlobContainerName = containerClient.Name,
+                    BlobName = blobClienturl.Name,
+                    Resource = "b",
+                    StartsOn = DateTime.UtcNow,
+                    ExpiresOn = DateTime.UtcNow.AddMonths(3)
+                };
+                sasBuilder.SetPermissions(BlobSasPermissions.Read);
+                string sasToken = sasBuilder.ToSasQueryParameters(new StorageSharedKeyCredential(containerClient.AccountName, storageAccountKey)).ToString();
 
-            var ffProbe = new NReco.VideoInfo.FFProbe();
-            var videoInfo = ffProbe.GetMediaInfo(downloadUrl);
-            int seconds = (int)videoInfo.Duration.TotalSeconds;
+                UriBuilder sasUri = new UriBuilder(blobClienturl.Uri) {
+                    Query = sasToken
+                };
+                string downloadUrl = sasUri.ToString();
+                string encodedUrl = Uri.EscapeUriString(downloadUrl);
+                Console.WriteLine(downloadUrl);
+                Console.WriteLine(encodedUrl);
+                await Console.Out.WriteLineAsync("sasBuild and getTime Success!");
 
-            using var connection = new NpgsqlConnection(connectionString);
+                BlobDownloadInfo downloadInfo = await blobClienturl.DownloadAsync();
 
-            string query = "UPDATE lecture SET video_url = @video_url, learning_time = @learning_time WHERE room_id = @room_id AND lecture_id = @lecture_id ";
-            var parametersUpdate = new DynamicParameters();
-            parametersUpdate.Add("room_id", RoomId);
-            parametersUpdate.Add("lecture_id", LectureId);
-            parametersUpdate.Add("video_url", encodedUrl);
-            parametersUpdate.Add("learning_time", seconds);
-            connection.Execute(query, parametersUpdate);
+              /*  var ffProbe = new NReco.VideoInfo.FFProbe();
+                var videoInfo = ffProbe.GetMediaInfo(downloadUrl);
+                int seconds = (int)videoInfo.Duration.TotalSeconds;
+              */
+                using var connection = new NpgsqlConnection(connectionString);
+
+                string query = "UPDATE lecture SET video_url = @video_url, learning_time = @learning_time WHERE room_id = @room_id AND lecture_id = @lecture_id ";
+                var parametersUpdate = new DynamicParameters();
+                parametersUpdate.Add("room_id", RoomId);
+                parametersUpdate.Add("lecture_id", LectureId);
+                parametersUpdate.Add("video_url", encodedUrl);
+                parametersUpdate.Add("learning_time", 30);
+                connection.Execute(query, parametersUpdate);
 
             await Console.Out.WriteLineAsync("db update Success!");
             return Ok();
