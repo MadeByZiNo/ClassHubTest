@@ -1,0 +1,202 @@
+﻿@page "/"
+@layout MainLayout
+@inject AuthenticationService AuthService
+@inject IModalService ModalService
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+@inject NavMenuTitleService NavMenuTitleService
+@inject SSOAuthenticationStateProvider authProvider
+@using ClassHub.Client.Models;
+@using ClassHub.Client.Shared.Modal;
+@using ClassHub.Shared;
+@using Microsoft.AspNetCore.Components.Authorization;
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
+@using Microsoft.AspNetCore.WebUtilities;
+@using Microsoft.JSInterop;
+@using System.Text;
+@using System.Text.Json
+
+<style>
+    @@media (max-width: 1400px) {
+        .responsive-font, .button-text {
+            font-size: 90%;
+        }
+    }
+
+    @@media (max-width: 1200px) {
+        .responsive-font, .button-text {
+            font-size: 80%;
+        }
+    }
+
+    @@media (max-width: 1000px) {
+        .responsive-font, .button-text {
+            font-size: 70%;
+        }
+    }
+
+    @@media (max-width: 800px) {
+        .responsive-font, .button-text {
+            font-size: 60%;
+        }
+    }
+
+    @@media (max-width: 600px) {
+        .responsive-font, .button-text {
+            font-size: 50%;
+        }
+    }
+
+    @@media (max-width: 400px) {
+        .responsive-font, .button-text {
+            font-size: 40%;
+        }
+    }
+</style>
+
+@if (classRoomList == null || notificationList == null || toDoList == null) {
+    <div class="d-flex justify-content-center mt-5">
+        <div class="spinner-border" style="width: 3rem; height: 3rem;" role="status" />
+    </div>  
+} else {
+    <div class="container-fluid responsive-font">
+        <div class="row">
+            <div class="col-12">
+                <div class="alert alert-primary" role="alert">
+                    <strong>Notice:</strong> 시간표 내의 강의 영역을 클릭하면 강의실로 이동합니다.
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-lg-9 col-12">
+                <Timetable ClassRoomList="classRoomList" />
+            </div>
+            <div class="col-lg-3 col-12">
+                <div class="row mb-4">
+                    <AuthorizeView Roles="professor">
+                        <button class="btn btn-success" @onclick="OpenBatchPostingList">일괄 게시</button>
+                    </AuthorizeView>
+                </div>
+                <div class="row">
+                    <h3 class="text-center col-12">알림 목록</h3>
+                    @if(notificationList.Count == 0) {
+                        <div class="alert alert-secondary" role="alert">
+                            알림이 없습니다.
+                        </div>
+                    } else {
+                        <div class="col-12 border" style="overflow: auto; max-height: 300px;">
+                            <ul class="list-group">
+                                @foreach(var notification in notificationList) {
+                                    <li class="list-group-item" @onclick="@(() => GoTo(notification.uri))" style="cursor:pointer;">
+                                        <div>@notification.title</div>
+                                        <div>@notification.message</div>
+                                        <div>@notification.GetNotifyDate()</div>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </div>
+                <br />
+                <div class="row">
+                    <h3 class="text-center col-12">할 일 목록</h3>
+                    @if(toDoList.Count == 0) {
+                        <div class="alert alert-secondary" role="alert">
+                            할 일이 없습니다.
+                        </div>
+                    } else {
+                        <div class="col-12 border" style="overflow: auto; max-height: 300px;">
+                            <ul class="list-group">
+                                @foreach(var toDo in toDoList) {
+                                    <li class="list-group-item" @onclick="@(() => GoTo(toDo.Uri))" style="cursor:pointer;">
+                                        <div>@toDo.GetTitle()</div>
+                                        <div>@toDo.EndTime</div>
+                                        <div>@toDo.GetDDay()</div>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ClassRoomDetail>? classRoomList;
+    private List<DisplayStudentNotification>? notificationList;
+    private List<ToDo>? toDoList;
+
+    protected async override void OnInitialized() {
+        var uri = NavigationManager.ToAbsoluteUri(NavigationManager.Uri);
+
+        // 로컬 스토리지에서 AccessToken이 있는지 확인
+        var accessToken = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "accessToken");
+
+        NavMenuTitleService.Title = "ClassHub"; 
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (firstRender) {
+            Task task1 = LoadTakesClassRoomList(); // 시간표 받아오기
+            Task task2 = LoadNotificationList();
+            Task task3 = GetToDoList(); // 할 일 목록 받아오기
+
+            await Task.WhenAll(task1, task2, task3);
+
+            StateHasChanged();
+        }
+    }
+
+    protected async Task LoadTakesClassRoomList() {
+        var accessToken = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "accessToken");
+
+        if (accessToken != null) {
+            var id = await UserInfo.GetUserIdAsync(JSRuntime);
+
+            //앱 서버로 수강과목 출력을 요청
+            try {
+                string role = await UserInfo.GetRoleAsync(JSRuntime);
+                Console.WriteLine($"role: {role}");
+                if(role == "professor") classRoomList = await Http.GetFromJsonAsync<List<ClassRoomDetail>>($"api/classroom/teaches/detail?instructor_id={id}&accessToken={accessToken}");
+                else classRoomList = await Http.GetFromJsonAsync<List<ClassRoomDetail>>($"api/classroom/takes?student_id={id}&accessToken={accessToken}");
+
+                Console.WriteLine($"classRoomListCount: {classRoomList.Count}");
+
+                int colorIndex = 0;
+                for (int i = 0; i < classRoomList.Count; i++) {
+                    var classRoom = classRoomList[i];
+                    if (classRoom.color == -1) {
+                        classRoom.color = colorIndex++;
+                    }
+                }
+            } catch(Exception e) {
+                Console.WriteLine(e);
+                classRoomList = new List<ClassRoomDetail>();
+            }
+        }
+    }
+
+    protected async Task LoadNotificationList() {
+        var student_id = await UserInfo.GetUserIdAsync(JSRuntime);
+        notificationList = await Http.GetFromJsonAsync<List<DisplayStudentNotification>>($"api/classroom/notification/all/{student_id}");
+    }
+
+    protected async Task GetToDoList() {
+        var student_id = await UserInfo.GetUserIdAsync(JSRuntime);
+        toDoList = await Http.GetFromJsonAsync<List<ToDo>>($"api/classroom/todolist/all?student_id={student_id}");
+    }
+
+    private void GoTo(string uri) {
+        NavigationManager.NavigateTo(NavigationManager.BaseUri + uri);
+    }
+
+    private async Task OpenBatchPostingList() {
+        var modalOptions = new ModalOptions() { Size = Blazored.Modal.ModalSize.Small };
+        var modalReference = ModalService.Show<BatchPostingModal>("일괄 게시", modalOptions);
+
+        var result = await modalReference.Result;
+    }
+}

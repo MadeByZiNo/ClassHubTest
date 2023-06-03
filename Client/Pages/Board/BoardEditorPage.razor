@@ -1,0 +1,278 @@
+﻿@page "/classroom/{roomid:int}/lecturematerial/edit"
+@page "/classroom/{roomid:int}/lecturematerial/{contentid:int}/edit"
+@page "/classroom/{roomid:int}/notice/edit"
+@page "/classroom/{roomid:int}/notice/{contentid:int}/edit"
+@layout MainLayout
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@using Blazored.TextEditor;
+@using ClassHub.Client.Models;
+@using ClassHub.Shared;
+@using System.Text.RegularExpressions;
+@using System.Text.Json;
+@using System.Text;
+@using System.Net.Http.Headers;
+
+@if(type == 0 || isLoading) {
+    <LoadingBar />
+} else {
+   <style>
+       .ql-editor{
+           min-height:200px;
+       }
+   </style>
+
+<div class="col-md-12">
+    <BackButton Msg="저장하지 않고 나가기" />
+    <div class="card mb-4">
+        <div class="card-header">
+            <input type="text" @bind="title" class="form-control mb-3" placeholder="제목을 입력해주세요.">
+            <ul class="nav nav-tabs card-header-tabs">
+                <li class="nav-item">
+                    <a class="nav-link @(isWriteTabSelected ? "active" : "")" @onclick="SelectWriteTab" data-toggle="tab" data-target="#editor-tab" style="cursor: pointer;">Write</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link @(isWriteTabSelected ? "" : "active")" @onclick="SelectPreviewTab" data-toggle="tab" data-target="#preview-tab" style="cursor: pointer;">Preview</a>
+                </li>
+            </ul>
+        </div>
+        <div class="card-body d-flex flex-column align-items-stretch">
+            <BlazoredTextEditor DebugLevel="warn" @ref="@QuillHtml" Placeholder="내용을 입력해주세요.">
+                <ToolbarContent>
+                    <select class="ql-header">
+                        <option selected=""></option>
+                        <option value="1"></option>
+                        <option value="2"></option>
+                        <option value="3"></option>
+                        <option value="4"></option>
+                        <option value="5"></option>
+                    </select>
+                    <span class="ql-formats">
+                        <button class="ql-bold"></button>
+                        <button class="ql-italic"></button>
+                        <button class="ql-underline"></button>
+                        <button class="ql-strike"></button>
+                    </span>
+                    <span class="ql-formats">
+                        <select class="ql-color"></select>
+                        <select class="ql-background"></select>
+                    </span>
+                    <span class="ql-formats">
+                        <button class="ql-list" value="ordered"></button>
+                        <button class="ql-list" value="bullet"></button>
+                     </span>
+                    <span class="ql-formats">
+                        <button class="ql-link"></button>
+                    </span>
+                    <span class="ql-formats">
+                        <button class="ql-align" value=""></button>
+                        <button class="ql-align" value="center"></button>
+                        <button class="ql-align" value="right"></button>
+                        <button class="ql-align" value="justify"></button>
+                    </span>
+                </ToolbarContent>
+                <EditorContent>
+                    @if (type == 1 || type == 3) {
+                        QuillHtml.LoadHTMLContent(contents);
+                    }
+                </EditorContent>
+            </BlazoredTextEditor>
+        </div>
+    </div>
+</div>
+
+    if(type == 1 || type == 2) {
+        <WeekPicker weekValue="@selectedWeek" ValueChanged="OnWeekChanged" allowMultipleSelection=false />
+        <br />
+    }
+
+
+    if(type == 1 || type == 2) {
+        <DragDropUpload @bind-droppedFiles="fileList" IsMultiple=true/>
+    }
+
+    <br />
+    <div class="d-flex justify-content-between mb-2">
+        <button class="btn btn-success" @onclick="@(()=>OpenDetail())">이전</button>
+        <button type="submit" class="btn btn-primary" @onclick="RegisterContent">등록</button>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int RoomId { get; set; }
+    [Parameter]
+    public int ContentId { get; set; }
+
+    /// <summary>
+    /// 1 - 강의자료 수정, 2 - 강의자료 게시, 3 - 공지사항 수정, 4 - 공지사항 게시
+    /// </summary>
+    private int type = 0;
+    private BoardContent? targetBoardContent;
+    private string title;
+    private string contents;
+    BlazoredTextEditor QuillHtml;
+    //기본 설정은 WriteTab
+    private bool isWriteTabSelected = true;
+    private bool isLoading = false;
+
+    private List<BoardContent> loadedContents = new List<BoardContent>();
+
+    // LectureMaterial Content에 필요한 변수
+    public List<int> selectedWeek = new List<int>() { 1, };
+    private List<IBrowserFile> fileList = new List<IBrowserFile>();
+
+    protected override async Task OnParametersSetAsync() // OninitializedAsync()를 대체함
+    {
+        string uri = NavigationManager.Uri;
+        if (new Regex("/classroom/[0-9]+/lecturematerial/[0-9]+/edit").IsMatch(uri)) {
+            Console.WriteLine("강의자료 수정");
+            type = 1;
+            // 수정 해야 하는 강의자료의 정보를 불러옵니다
+            var result = await Http.GetFromJsonAsync<List<LectureMaterial>>($"api/classroom/{RoomId}/lecturematerial/all");
+            if(result != null) {
+                foreach(var item in result) {
+                    loadedContents.Add(new LectureMaterialContent {
+                        room_id = item.room_id,
+                        content_id = item.material_id,
+                        week = item.week,
+                        title = item.title,
+                        author = item.author,
+                        contents = item.contents,
+                        publish_date = item.publish_date,
+                        up_date = item.up_date,
+                        view_count = item.view_count
+                    });
+                }
+            }
+            targetBoardContent = loadedContents.Where(x => x.content_id == ContentId).FirstOrDefault();
+            if(targetBoardContent != null) {
+                title = targetBoardContent.title;
+                contents = targetBoardContent.contents;
+            }
+        } else if (new Regex("/classroom/[0-9]+/lecturematerial/edit").IsMatch(uri)) {
+            Console.WriteLine("강의자료 게시");
+            type = 2;
+        } else if (new Regex("/classroom/[0-9]+/notice/[0-9]+/edit").IsMatch(uri)) {
+            Console.WriteLine("공지사항 수정");
+            type = 3;
+            // 수정 해야 하는 공지사항의 정보를 불러옵니다
+            var result = await Http.GetFromJsonAsync<List<Notice>>($"api/classroom/{RoomId}/notice/all");
+            if(result != null) {
+                foreach(var item in result) {
+                    loadedContents.Add(new NoticeContent {
+                            room_id = item.room_id,
+                            content_id = item.notice_id,
+                            title = item.title,
+                            author = item.author,
+                            contents = item.contents,
+                            publish_date = item.publish_date,
+                            up_date = item.up_date,
+                            view_count = item.view_count
+                        });
+                }
+            }
+            targetBoardContent = loadedContents.Where(x => x.content_id == ContentId).FirstOrDefault();
+            if(targetBoardContent != null) {
+                title = targetBoardContent.title;
+                contents = targetBoardContent.contents;
+            }
+        } else if (new Regex("/classroom/[0-9]+/notice/edit").IsMatch(uri)) {
+            type = 4;
+            Console.WriteLine("공지사항 게시");
+        } else {
+            type = -1;
+            Console.WriteLine("예상하지 못한 접근 경로");
+        }
+    }
+
+    private async void OpenDetail() {
+        bool result = await JSRuntime.InvokeAsync<bool>("showConfirm", "사이트에서 나가시겠습니까?", "변경사항이 저장되지 않을 수 있습니다.", "나가기");
+        if (result)
+        {
+            NavigationManager.NavigateTo(NavigationManager.Uri.Substring(0, NavigationManager.Uri.LastIndexOf("/")));
+        }
+    }
+
+    private void OpenList() {
+        NavigationManager.NavigateTo(NavigationManager.Uri.Substring(0, NavigationManager.Uri.LastIndexOf("/")));
+    }
+
+    private async void RegisterContent() {
+        contents = await this.QuillHtml.GetHTML();
+        if(type == 1) {
+            // 강의자료 수정
+            LectureMaterial lectureMaterial = new LectureMaterial(Http, fileList) {
+                material_id =targetBoardContent.content_id,
+                room_id = RoomId,
+                week = selectedWeek[0],
+                title = title,
+                author = targetBoardContent.author,
+                contents = contents,
+                publish_date = targetBoardContent.publish_date,
+                up_date = DateTime.Now,
+                view_count = targetBoardContent.view_count
+            };
+            await lectureMaterial.PutLectureMaterialAsync();
+        } else if(type == 2) {
+            // 강의자료 게시
+            LectureMaterial lectureMaterial = new LectureMaterial(Http, fileList) {
+                room_id = RoomId,
+                week = selectedWeek[0],
+                title = title,
+                author = await UserInfo.GetUserNameAsync(JSRuntime),
+                contents = contents,
+                publish_date = DateTime.Now,
+                up_date = DateTime.Now,
+                view_count = 0
+            };
+            await lectureMaterial.PostLectureMaterialAsync();
+        } else if(type == 3) {
+            // 공지사항 수정
+            Notice notice = new Notice(Http) {
+                room_id = RoomId,
+                notice_id = targetBoardContent.content_id,
+                title = title,
+                author = targetBoardContent.author,
+                contents = contents,
+                publish_date = targetBoardContent.publish_date,
+                up_date = DateTime.Now,
+                view_count = targetBoardContent.view_count
+            };
+            await notice.PutNoticeAsync();
+        } else if(type == 4) {
+            // 공지사항 게시
+            Notice notice = new Notice(Http) {
+                room_id = RoomId,
+                title = title,
+                author = await UserInfo.GetUserNameAsync(JSRuntime),
+                contents = contents,
+                publish_date = DateTime.Now,
+                up_date = DateTime.Now,
+                view_count = 0
+            };
+            await notice.PostNoticeAsync();
+        }
+
+        // 목록 또는 게시글 페이지로 돌아감
+        NavigationManager.NavigateTo(NavigationManager.Uri.Substring(0, NavigationManager.Uri.LastIndexOf("/")));
+    }
+
+    private async Task OnWeekChanged(List<int> week)
+    {
+        selectedWeek = week;
+        Console.WriteLine(selectedWeek[0]);
+        await Task.CompletedTask;
+    }
+
+    private void SelectWriteTab() {
+        isWriteTabSelected = true;
+        StateHasChanged();
+    }
+
+    private void SelectPreviewTab() {
+        isWriteTabSelected = false;
+        StateHasChanged();
+    }
+}

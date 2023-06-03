@@ -1,0 +1,107 @@
+﻿@page "/classroom/{id:int}"
+@layout MainLayout
+@using ClassHub.Shared
+@using ClassHub.Client.Models
+@inject HttpClient Http
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+
+<style>
+    li.list-group-item:hover {
+        background-color: rgba(0, 0, 0, 0.1);
+    }
+</style>
+
+@if(classRoom == null || toDoList == null) {
+    <p><em>강의실 정보를 로딩 중입니다...</em></p>
+} else {
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-lg-9 col-12">
+                <AttendanceStatusVertical MaxCount="2" />
+            </div>
+            <div class="col-lg-3 col-12">
+                <div class="row">
+                    <h3 class="text-center col-12" style="margin-top : 25%;">공지사항</h3>
+
+                        @if(contents.Count == 0) {
+                            <div class="alert alert-secondary" role="alert">
+                                공지사항이 없습니다.
+                            </div>
+                        } else{
+                            <div class="col-12 border mb-3" style="overflow: auto; max-height: 300px;">
+                                <ul class="list-group">
+                                    @foreach(var content in contents) {
+                                        <li class="list-group-item" @onclick="@(() => ShowContents(content))" style="cursor:pointer; block-size : auto;">@content.title</li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                </div>
+                <div class="row">
+                    <h3 class="text-center col-12">할 일 목록</h3>
+                        @if(toDoList.Count == 0){
+                            <div class="alert alert-secondary" role="alert">
+                                할 일이 없습니다.
+                            </div>
+                        } else{
+                            <div class="col-12 border" style="overflow: auto; max-height: 300px;">
+                                <ul class="list-group">
+                                    @foreach(var toDo in toDoList) {
+                                        <li class="list-group-item" @onclick="@(() => GoTo(toDo.Uri))" style="cursor:pointer;">@toDo.GetTitle()</li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private ClassRoom? classRoom;
+    private List<BoardContent>? contents;
+    private List<ToDo>? toDoList;
+
+    protected async override void OnInitialized() {
+        // RoomId와 매칭되는 강의실의 정보를 가져옵니다.
+        classRoom = await Http.GetFromJsonAsync<ClassRoom>($"api/classroom/{Id}");
+
+        var notices = await Http.GetFromJsonAsync<List<Notice>>($"api/classroom/{Id}/notice/all");
+        if (notices != null) {
+            contents = new List<BoardContent>();
+            foreach (var notice in notices) {
+                this.contents.Add(new NoticeContent() {
+                    room_id = notice.room_id,
+                    content_id = notice.notice_id,
+                    title = notice.title,
+                    author = notice.author,
+                    contents = notice.contents,
+                    publish_date = notice.publish_date,
+                    up_date = notice.up_date,
+                    view_count = notice.view_count
+                });
+            }
+            contents = contents.OrderByDescending(a => a.content_id).ToList();
+
+            await LoadToDoList();
+            StateHasChanged();
+        }
+    }
+
+    private void ShowContents(BoardContent boardContent) {
+        NavigationManager.NavigateTo(NavigationManager.Uri + $"/notice/{boardContent.content_id}");
+    }
+
+    private void GoTo(string uri) {
+        NavigationManager.NavigateTo(NavigationManager.BaseUri + uri);
+    }
+
+    private async Task LoadToDoList() {
+        toDoList = await Http.GetFromJsonAsync<List<ToDo>>($"api/classroom/todolist?room_id={classRoom.room_id}&student_id={await UserInfo.GetUserIdAsync(JSRuntime)}");
+    }
+}

@@ -1,0 +1,215 @@
+@page "/classroom/{roomid:int}/practice/{practiceid:int}"
+@layout MainLayout
+@using ClassHub.Shared
+@using ClassHub.Client.Models
+@using System.Text.Json
+@using System.Text
+@using Microsoft.AspNetCore.SignalR.Client;
+@using Newtonsoft.Json.Linq;
+
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inherits LayoutComponentBase
+
+@*todo : 중간에 리사이즈 선 구현, 브라우저 사이즈에 따라 유연하게 대처 *@
+
+@if (!dataLoaded) {
+    <LoadingBar />
+} else {
+<BackButton />
+<div class="container-fluid">
+    <div class="d-flex flex-column justify-content-between">
+        <div>
+            <div style="background-color: whitesmoke; padding: 1rem; border-top:2px solid black; border-bottom: 1px solid grey">
+                <h1>@practice.Title</h1>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; ">
+                <div style="display: flex; align-items: center;">
+                    <p style="margin-right: 50px; margin-bottom: 0;">작성자: @practice.Author</p>
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <div style="margin-right: 20px;">
+                        <div>시작일: @practice.StartDate.ToString("yyyy.MM.dd HH:mm")</div>    
+                        <div>마감일: @practice.EndDate.ToString("yyyy.MM.dd HH:mm")</div>
+                    </div>
+                    <div style="margin-right: 20px;">제출 언어: @practice.Language</div>
+                    <div>
+                        <div>점수 반영: @((practice.isApplyScore) ? "반영" : "미반영")</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <hr style="margin-top: 0rem; margin-bottom: 0.5rem; border: 0; border-top: 1px solid grey;">
+    <div class="row" style="width: 100%; margin-top :3rem;">
+        <div class="col-md-6" style="max-height: calc(100vh - 50px); width: 45%;overflow-y: auto;">
+            <div class="d-flex flex-column justify-content-between h-100">
+                <div>
+                    <h5 style="font-weight: bold;">문제 설명</h5>
+                    <div>@((MarkupString)practice.Content)</div>
+                    <hr />
+                    @foreach (var i in Enumerable.Range(0, practice.ExamOutputCases.Count()))
+                    {
+                        <div class="row" style="margin-top: 30px;">
+                            <div class="col-6">
+                                <h6>입력케이스 @(i+1)</h6>
+                                <textarea disabled="disabled" rows="5" cols="30" wrap="off" style="white-space: pre-wrap; overflow-x: auto;">@(string.IsNullOrEmpty(practice.ExamInputCases.ElementAtOrDefault(i)) ? "" : practice.ExamInputCases[i])</textarea>
+                            </div>
+                            <div class="col-6">
+                                <h6>출력케이스 @(i+1)</h6>
+                                <textarea disabled="disabled" rows="5" cols="30" wrap="off" style="white-space: pre-wrap; overflow-x: auto;">@practice.ExamOutputCases[i]</textarea>
+                            </div>
+                        </div>
+                    }
+                    <hr />
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4" style="height: 100%; width: 55%;">
+            <MonacoEditor @ref="MonacoEditorReference" />
+            @if (role == "student"){
+                <button class="btn-outline-secondary" style="margin-top: 10px;" @onclick="SubmitCode">코드 제출</button>
+                <button class="btn-outline-secondary" style="margin-top: 10px;" @onclick="MultipleSubmitCode">데모 코드 제출</button>
+            }
+            <button class="btn-outline-secondary" style="margin-top: 10px;margin-left: 10px;" @onclick="CheckSubmitHistory">제출 내역 확인</button>
+        </div>
+    </div>
+</div>
+}
+
+@code {
+    [Parameter]
+    public int RoomId { get; set; }
+    [Parameter]
+    public int PracticeId { get; set; }
+    private string role;
+    private Practice practice = new Practice();
+
+    // MonacoEditor 컴포넌트 참조 변수
+    private MonacoEditor? MonacoEditorReference;
+    bool dataLoaded = false;
+    // 초기화 할때 실습 데이터를 받아온다.
+    protected override async Task OnParametersSetAsync(){
+        role = await UserInfo.GetRoleAsync(JSRuntime);
+        practice = await Http.GetFromJsonAsync<Practice>($"api/practice/room_id/{RoomId}/practice_id/{PracticeId}");
+        dataLoaded = true;
+        StateHasChanged();
+    }
+
+    private async Task CheckSubmitHistory(){
+        Console.WriteLine($"{practice.Id}번 과제의 제출내역을 클릭하였습니다.");
+        NavigationManager.NavigateTo(NavigationManager.Uri + "/submitresult");
+    }
+
+    // 채점 서버로 요청을 보냄
+    private async Task SubmitCode(){
+        //모나코에디터로부터 현재 설정된 언어를 가져오기 위한 코드
+        var model = await MonacoEditorReference.editor.GetModel();
+        var language = await model.GetLanguageId();
+
+        // 제출 언어와 다르면 제출을 할 수 없게 처리
+        if (language != practice.Language) {
+            await JSRuntime.InvokeVoidAsync("alert", "제출 언어와 다릅니다."); return;
+        }
+
+        // 채점 요청을 전송하기 위한 객체 생성
+        JudgeRequest requestJudge = new JudgeRequest
+            {
+                CorrectCode = practice.CorrectCode,
+                CorrectCodeLanguage = practice.Language,
+                SubmitCode = await MonacoEditorReference.editor.GetValue(),
+                SubmitCodeLanguage = language,
+                MemoryUsageLimit = 500,
+                ExecutionTimeLimit = 50,
+                InputCases = practice.IntputCases,
+                SubmitId = 1
+      };
+        // 제출 결과를 생성하기 위한 객체 생성
+        CodeSubmit requestSubmit = new CodeSubmit
+            {
+                room_id = RoomId,
+                assignment_id = PracticeId,
+                week = 1,
+                submit_date = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Seoul")),
+                status = JudgeResult.JResult.Pending.ToString(),
+                submit_id = 1,
+                student_id = await UserInfo.GetUserIdAsync(JSRuntime),
+                student_name = await UserInfo.GetUserNameAsync(JSRuntime),
+                exec_time = 0,
+                mem_usage = 0,
+                code = await MonacoEditorReference.editor.GetValue(),
+                message = " ",
+                language = language
+            };
+
+        //하나로 묶어준다.
+        RequestSubmitContainer requestSubmitContainer = new RequestSubmitContainer(requestJudge, requestSubmit);
+        // 직렬화
+        var content = new StringContent(JsonSerializer.Serialize(requestSubmitContainer), Encoding.UTF8, "application/json");
+        // 제출 내역 창으로 이동한다.
+        CheckSubmitHistory();
+        // 서버에 채점을 요청한다.
+        Console.WriteLine("?");
+        HttpResponseMessage response = await Http.PostAsync("Judge", content);
+    }
+
+    // 데모를 위해 여러 유형의 코드를 채점 서버로 제출함
+    private async Task MultipleSubmitCode() {
+        SubmitCodeForDemo(DemoCodeTemplate.Type.CORRECT);
+        SubmitCodeForDemo(DemoCodeTemplate.Type.WRONG);
+        SubmitCodeForDemo(DemoCodeTemplate.Type.COMPILE_ERROR);
+        SubmitCodeForDemo(DemoCodeTemplate.Type.RUNTIME_ERROR);
+        CheckSubmitHistory();
+    }
+
+    // 데모를 위해 채점 서버로 코드를 제출함
+    private async Task SubmitCodeForDemo(DemoCodeTemplate.Type type) {
+        //모나코에디터로부터 현재 설정된 언어를 가져오기 위한 코드
+        var model = await MonacoEditorReference.editor.GetModel();
+        var language = await model.GetLanguageId();
+
+        // 제출 언어와 다르면 제출을 할 수 없게 처리
+        if (language != practice.Language) { 
+            await JSRuntime.InvokeVoidAsync("alert", "제출 언어와 다릅니다."); return;
+        }
+
+        // 채점 요청을 전송하기 위한 객체 생성
+        string typeCode = DemoCodeTemplate.codeTemplates[language][type];
+
+        JudgeRequest requestJudge = new JudgeRequest {
+            CorrectCode = practice.CorrectCode,
+            CorrectCodeLanguage = practice.Language,
+            SubmitCode = typeCode,
+            SubmitCodeLanguage = language,
+            MemoryUsageLimit = 500,
+            ExecutionTimeLimit = 50,
+            InputCases = practice.IntputCases,
+            SubmitId = 1
+        };
+
+        // 제출 결과를 생성하기 위한 객체 생성
+        CodeSubmit requestSubmit = new CodeSubmit {
+                room_id = RoomId,
+                assignment_id = PracticeId,
+                week = 1,
+                submit_date = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Seoul")),
+                status = JudgeResult.JResult.Pending.ToString(),
+                submit_id = 1,
+                student_id = await UserInfo.GetUserIdAsync(JSRuntime),
+                student_name = await UserInfo.GetUserNameAsync(JSRuntime),
+                exec_time = 0,
+                mem_usage = 0,
+                code = typeCode,
+                message = " ",
+                language = language
+            };
+
+        //하나로 묶어준다.
+        RequestSubmitContainer requestSubmitContainer = new RequestSubmitContainer(requestJudge, requestSubmit);
+        // 직렬화
+        var content = new StringContent(JsonSerializer.Serialize(requestSubmitContainer), Encoding.UTF8, "application/json");
+        // 서버에 채점을 요청한다.
+        HttpResponseMessage response = await Http.PostAsync("Judge", content);
+    }
+}
